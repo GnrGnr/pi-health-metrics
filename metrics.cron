@@ -1,0 +1,7 @@
+# Worker metrics — submit CPU + temp every minute.
+# Install with `crontab -e` (or copy this file and edit the path):
+#   * * * * * /home/admin/cluster-manager/agents/worker/metrics.py >> /home/admin/cluster-manager/agents/worker/metrics.log 2>&1
+#
+# psutil's cpu_percent(interval=1) blocks for 1 second, so the script takes
+# ~1.5s wall time. Cron's 1-minute granularity is plenty.
+* * * * * /home/admin/cluster-manager/agents/worker/metrics.py >> /home/admin/cluster-manager/agents/worker/metrics.log 2>&1
