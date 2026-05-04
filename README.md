@@ -2,8 +2,6 @@
 
 A small Python script that runs on each worker Pi via cron, reads CPU% and CPU temperature, and POSTs them to the cluster-manager. The cluster-manager renders the data as a per-card sparkline on `/home`.
 
-> Renamed from `agents/worker/` — see "Migrating from the old `agents/worker/` setup" at the bottom of this file.
-
 ## Install
 
 On each worker Pi:
@@ -77,34 +75,3 @@ DELETE FROM cluster_pi_metric WHERE measured_at < NOW() - INTERVAL 24 HOUR;
 ```
 
 So data is pruned by *any* worker's submission, regardless of which Pi it came from. If all workers go silent, no pruning happens — the existing rows simply stop ageing out.
-
-## Migrating from the old `agents/worker/` setup
-
-If you previously had `metrics.py` running from `agents/worker/`, the directory has moved to `agents/worker-health/`. After `git pull` on the worker Pi:
-
-```sh
-# Edit your existing crontab and update the path
-crontab -e
-```
-
-Replace the old line:
-
-```
-* * * * * /home/admin/cluster-manager/agents/worker/metrics.py >> /home/admin/cluster-manager/agents/worker/metrics.log 2>&1
-```
-
-with:
-
-```
-* * * * * /home/admin/cluster-manager/agents/worker-health/metrics.py >> /home/admin/cluster-manager/agents/worker-health/metrics.log 2>&1
-```
-
-Save and exit. Cron picks up the change on the next minute boundary — no reload needed.
-
-If you had any `.env` or untracked log files in the old `agents/worker/` directory, git will not have moved them (only tracked files follow the rename). Move them manually:
-
-```sh
-mv ~/cluster-manager/agents/worker/.env ~/cluster-manager/agents/worker-health/.env 2>/dev/null
-mv ~/cluster-manager/agents/worker/metrics.log ~/cluster-manager/agents/worker-health/metrics.log 2>/dev/null
-rmdir ~/cluster-manager/agents/worker 2>/dev/null
-```
