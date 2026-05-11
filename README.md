@@ -15,12 +15,15 @@ cd ~
 git clone git@github.com:GnrGnr/cluster-manager.git
 cd cluster-manager/agents/worker-health
 
-cp .env.example .env
-# edit .env:
-#   INGEST_URL  -> https://<your-domain>/api/metrics-ingest
-#   WORKER_SECRET -> the shared secret from the cluster-manager's .env
-#   NODE_NAME   -> this Pi's name as registered in the `cluster_pi` table
-chmod 600 .env
+# Shared per-Pi env file at ../.env (one level up, in the agents/ dir).
+# Same file is read by every Pi-side agent on this machine.
+# If it doesn't exist yet, create it from the example:
+[ -f ../.env ] || cp ../.env.example ../.env
+# edit ../.env:
+#   INGEST_URL    -> https://<your-domain>/api/metrics-ingest
+#   WORKER_SECRET -> the shared secret from the cluster-manager's root .env
+#   NODE_NAME     -> this Pi's name as registered in the `cluster_pi` table
+chmod 600 ../.env
 
 # sanity check: run once manually
 ./metrics.py && echo "ok"
@@ -45,6 +48,8 @@ The script blocks for 1 second on `psutil.cpu_percent(interval=1)`, so each invo
 `metrics.log` will contain stderr from any failures (network timeouts, 404 if the Pi name isn't registered yet, etc.). It's gitignored. Rotate manually if it ever grows large — typical noise is one line per failure, near-zero on a healthy network.
 
 ## Environment variables
+
+Read from the shared per-Pi env file at `agents/.env` (one level above this script). See [agents/.env.example](../.env.example) for the full canonical reference; the keys this script consumes are:
 
 | Var | Description |
 |---|---|

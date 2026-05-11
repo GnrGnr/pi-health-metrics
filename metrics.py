@@ -15,8 +15,10 @@ import requests
 
 
 def load_env():
+    # Shared per-Pi env file at `agents/.env`, one directory up from this
+    # script. See agents/.env.example for the full key reference.
     env = {}
-    env_path = Path(__file__).parent / '.env'
+    env_path = Path(__file__).resolve().parent.parent / '.env'
     if not env_path.exists():
         print(f'metrics: missing {env_path}', file=sys.stderr)
         sys.exit(2)
