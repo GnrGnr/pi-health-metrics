@@ -1,0 +1,18 @@
+[Unit]
+Description=Pi health metrics submitter (one-shot, triggered by pi-health-metrics.timer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as the invoking user (overridden by install.sh to whoever ran it).
+User=admin
+WorkingDirectory=/home/admin/pi-health-metrics
+ExecStart=/usr/bin/python3 /home/admin/pi-health-metrics/metrics.py
+# psutil.cpu_percent(interval=1) blocks for 1s; rest is HTTP. 20s is
+# plenty of headroom for slow networks; failure exits cleanly and the
+# timer fires the next minute.
+TimeoutStartSec=20s
+
+[Install]
+WantedBy=multi-user.target

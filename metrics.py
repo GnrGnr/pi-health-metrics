@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Worker metrics submitter.
+Pi health metrics submitter.
 
-Reads CPU% (averaged across cores) and CPU temperature, POSTs them to the
-cluster-manager's metrics-ingest endpoint. Designed to be run from cron once
-per minute. Reads its config from `.env` next to this script.
+Reads CPU% (averaged across cores) and CPU temperature, POSTs them to
+cluster-frontend's /api/metrics-ingest endpoint. Designed to be run by a
+systemd timer (every minute). Reads its config from .env next to this
+script.
+
+This repo is standalone — install it on any Pi you want to appear in the
+dashboard's health charts, regardless of whether the Pi is also a cluster
+worker, the cluster controller, a presence scanner, or something else
+entirely (HomeAssistant, etc.).
 """
-import json
 import os
 import subprocess
 import sys
@@ -15,18 +20,17 @@ from pathlib import Path
 import psutil
 import requests
 
-# Repo root, two directories above this script (agents/worker-health/ → agents/ → root).
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# Repo root = directory this script lives in. metrics.py is the entry
+# point at the top of the repo; VERSION and .env sit next to it.
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 def load_env():
-    # Shared per-Pi env file at `agents/.env`, one directory up from this
-    # script. See agents/.env.example for the full key reference.
-    env = {}
-    env_path = Path(__file__).resolve().parent.parent / '.env'
+    env_path = REPO_ROOT / '.env'
     if not env_path.exists():
         print(f'metrics: missing {env_path}', file=sys.stderr)
         sys.exit(2)
+    env = {}
     for line in env_path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#') or '=' not in line:
@@ -53,22 +57,19 @@ def read_temp():
 
 
 def read_agent_version():
-    """Return the cluster-manager project version from the repo root
-    package.json, or None if it can't be read."""
-    pkg = REPO_ROOT / 'package.json'
+    """Return the pi-health-metrics version from the repo's VERSION file,
+    or None if it can't be read. Plain-text semver, one line."""
+    vfile = REPO_ROOT / 'VERSION'
     try:
-        with pkg.open('r', encoding='utf-8') as f:
-            data = json.load(f)
-        v = data.get('version')
-        return v if isinstance(v, str) and v else None
-    except (OSError, ValueError):
+        v = vfile.read_text(encoding='utf-8').strip()
+        return v or None
+    except OSError:
         return None
 
 
 def read_agent_commit():
-    """Return the short git commit hash (7 chars) of the worktree this
-    script lives in, or None if git isn't available / the directory isn't
-    a git repo."""
+    """Return the short git commit hash (7 chars) of this worktree, or
+    None if git isn't available / the directory isn't a git repo."""
     try:
         out = subprocess.run(
             ['git', 'rev-parse', '--short', 'HEAD'],
@@ -102,7 +103,7 @@ def main():
         payload['temp'] = temp
 
     # Best-effort version reporting. Both fields are optional; if either
-    # read fails (no package.json, no git, detached worktree, …), the
+    # read fails (no VERSION file, no git, detached worktree, …), the
     # endpoint will skip updating that column. Sending null on every tick
     # would wipe the existing row's value, so we omit instead.
     agent_version = read_agent_version()
@@ -125,7 +126,7 @@ def main():
 
     if resp.status_code == 404:
         print(f'metrics: pi name "{env["NODE_NAME"]}" not registered yet', file=sys.stderr)
-        sys.exit(0)  # not an error worth alerting on; cron will retry next minute
+        sys.exit(0)  # not an error worth alerting on; the timer will retry next minute
     if resp.status_code >= 400:
         print(f'metrics: ingest returned HTTP {resp.status_code}: {resp.text}', file=sys.stderr)
         sys.exit(1)

@@ -1,0 +1,17 @@
+[Unit]
+Description=Run pi-health-metrics every minute
+Requires=pi-health-metrics.service
+
+[Timer]
+# Start 45s after boot so the daemon isn't competing with the OS warmup
+# for CPU during the cpu_percent(interval=1) sample.
+OnBootSec=45s
+OnCalendar=*:0/1
+AccuracySec=5s
+# Don't catch up missed runs after a long power-off — the metrics are
+# only meaningful in real-time.
+Persistent=false
+Unit=pi-health-metrics.service
+
+[Install]
+WantedBy=timers.target
