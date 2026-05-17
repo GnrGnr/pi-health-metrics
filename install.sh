@@ -131,6 +131,40 @@ else
 	dim "no legacy scanner units"
 fi
 
+# ─── 2c. enable persistent systemd journal ────────────────────────────────────
+# Pi OS Lite defaults to volatile journal (tmpfs only). After a reboot,
+# previous-boot logs are gone — which makes post-mortem of any crash
+# (OOM kill, kernel hang, SD I/O error, …) basically impossible.
+# Pi-health-metrics installs on every Pi in the fleet, so it's the right
+# place to flip persistent journal on universally.
+#
+# Idempotent: if the per-machine subdirectory already exists with
+# content, journald is already persistent — skip. Otherwise create
+# /var/log/journal with the canonical layout and restart journald,
+# which will create the per-machine subdir on first start.
+say "→ Enable persistent systemd journal"
+MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || true)
+if [ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ] \
+		&& [ -n "$(ls -A "/var/log/journal/$MACHINE_ID" 2>/dev/null)" ]; then
+	dim "already persistent — /var/log/journal/$MACHINE_ID exists"
+else
+	# An empty /var/log/journal/ confuses journald (it's been observed
+	# in this fleet to leave it empty rather than create the per-machine
+	# subdir). Nuke and recreate from scratch with canonical perms.
+	systemctl stop systemd-journald 2>/dev/null || true
+	rm -rf /var/log/journal
+	install -d -o root -g systemd-journal -m 2755 /var/log/journal
+	systemctl start systemd-journald
+	# Give journald a moment to create the per-machine subdir.
+	sleep 1
+	if [ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ]; then
+		ok "persistent journal enabled at /var/log/journal/$MACHINE_ID"
+	else
+		warn "persistent journal directory created but journald didn't populate it"
+		warn "  check: systemctl status systemd-journald"
+	fi
+fi
+
 # ─── 3. python deps ────────────────────────────────────────────────────────────
 say "→ Verify Python deps"
 if ! sudo -u "$RUN_USER" python3 -c "import psutil, requests" 2>/dev/null; then
