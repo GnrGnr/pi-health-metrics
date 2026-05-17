@@ -164,12 +164,44 @@ sed \
 	-e "s|^ExecStart=.*$|ExecStart=/usr/bin/python3 $REPO_ROOT/metrics.py|" \
 	"$SERVICE_SRC" > "$TMP_SERVICE"
 
+# Sanity-check that we actually produced a real unit file. If /tmp is
+# tmpfs and the system is under memory pressure (chronic on 1 GB Pis),
+# the redirect above can succeed with an empty result. Installing an
+# empty file to /etc/systemd/system/ effectively masks the unit — the
+# timer becomes inert and the user gets no clue why. Refuse early.
+if [ ! -s "$TMP_SERVICE" ]; then
+	err "generated unit file is empty — refusing to install."
+	err "  source: $SERVICE_SRC ($(stat -c%s "$SERVICE_SRC" 2>/dev/null || echo '?') bytes)"
+	err "  temp:   $TMP_SERVICE ($(stat -c%s "$TMP_SERVICE" 2>/dev/null || echo '?') bytes)"
+	err "  /tmp space:"
+	df -h /tmp 2>&1 | sed 's/^/    /' >&2
+	exit 1
+fi
+if [ ! -s "$TIMER_SRC" ]; then
+	err "timer source file is empty — refusing to install: $TIMER_SRC"
+	exit 1
+fi
+
+# If the destination is currently masked (symlink to /dev/null, or a
+# zero-byte file left by a previous broken run), unmask it first. The
+# install below would otherwise either fail (real mask) or look like a
+# success but produce a still-masked-equivalent state.
+for dest in "$SERVICE_DEST" "$TIMER_DEST"; do
+	if [ -L "$dest" ] && [ "$(readlink "$dest")" = "/dev/null" ]; then
+		warn "$dest is masked (symlink to /dev/null) — unmasking"
+		rm -f "$dest"
+	elif [ -e "$dest" ] && [ ! -s "$dest" ]; then
+		warn "$dest is zero-byte (broken previous install) — removing"
+		rm -f "$dest"
+	fi
+done
+
 NEED_RELOAD=0
 if cmp -s "$TMP_SERVICE" "$SERVICE_DEST" 2>/dev/null; then
 	dim "$SERVICE_DEST unchanged"
 else
 	install -m 644 "$TMP_SERVICE" "$SERVICE_DEST"
-	ok "installed $SERVICE_DEST"
+	ok "installed $SERVICE_DEST ($(stat -c%s "$SERVICE_DEST") bytes)"
 	NEED_RELOAD=1
 fi
 
@@ -177,7 +209,7 @@ if cmp -s "$TIMER_SRC" "$TIMER_DEST" 2>/dev/null; then
 	dim "$TIMER_DEST unchanged"
 else
 	install -m 644 "$TIMER_SRC" "$TIMER_DEST"
-	ok "installed $TIMER_DEST"
+	ok "installed $TIMER_DEST ($(stat -c%s "$TIMER_DEST") bytes)"
 	NEED_RELOAD=1
 fi
 
