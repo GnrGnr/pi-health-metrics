@@ -340,6 +340,54 @@ esac
 # to a minute for the next scheduled tick.
 systemctl start pi-health-metrics.service || true
 
+# ─── 7. NODE_NAME sanity check ────────────────────────────────────────────────
+# Bites people during fleet rollouts: the .env gets copied from another Pi
+# (preserving secrets) but NODE_NAME accidentally stays the source Pi's
+# name, so metrics submit under the wrong identity. Dashboard shows
+# "Boot error" on the affected Pi (no metric arriving for *that* Pi) and
+# the source Pi happily gets double-coverage. Hard to spot without this
+# check.
+#
+# Best-effort: hostname stripped of common prefixes (Worker-, etc.)
+# usually matches cluster_pi.name. Where it doesn't (custom hostname,
+# unusual naming), we just warn — can't fail-hard since we can't enforce
+# the naming convention.
+say "→ NODE_NAME sanity check"
+EXPECTED_NAME=$(hostname | sed 's/^Worker-//')
+HEALTH_NN=$(grep '^NODE_NAME=' "$REPO_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"'"'")
+WORKER_ENV="$RUN_HOME/pi-cluster-worker/agents/.env"
+WORKER_NN=""
+if [ -f "$WORKER_ENV" ]; then
+	WORKER_NN=$(sudo -u "$RUN_USER" grep '^NODE_NAME=' "$WORKER_ENV" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"'"'")
+fi
+
+MISMATCH=0
+if [ "$HEALTH_NN" != "$EXPECTED_NAME" ]; then
+	warn "pi-health-metrics/.env NODE_NAME='$HEALTH_NN' differs from hostname-derived '$EXPECTED_NAME'"
+	MISMATCH=1
+fi
+if [ -n "$WORKER_NN" ] && [ "$WORKER_NN" != "$EXPECTED_NAME" ]; then
+	warn "pi-cluster-worker/agents/.env NODE_NAME='$WORKER_NN' differs from hostname-derived '$EXPECTED_NAME'"
+	MISMATCH=1
+fi
+if [ -n "$WORKER_NN" ] && [ "$HEALTH_NN" != "$WORKER_NN" ]; then
+	warn "the two .env files disagree: health='$HEALTH_NN' worker='$WORKER_NN'"
+	MISMATCH=1
+fi
+if [ "$MISMATCH" -eq 1 ]; then
+	warn "if this Pi's cluster_pi.name really is '$EXPECTED_NAME', fix with:"
+	dim "  sudo sed -i 's/^NODE_NAME=.*/NODE_NAME=$EXPECTED_NAME/' $REPO_ROOT/.env"
+	if [ -f "$WORKER_ENV" ]; then
+		dim "  sudo sed -i 's/^NODE_NAME=.*/NODE_NAME=$EXPECTED_NAME/' $WORKER_ENV"
+		dim "  sudo systemctl restart pi-health-metrics.service cluster-worker.service"
+	else
+		dim "  sudo systemctl restart pi-health-metrics.service"
+	fi
+	warn "(this is non-fatal — install completed, metrics will submit under the current NODE_NAME)"
+else
+	ok "NODE_NAME='$EXPECTED_NAME' matches hostname"
+fi
+
 # ─── done ──────────────────────────────────────────────────────────────────────
 VERSION=$(cat "$REPO_ROOT/VERSION" 2>/dev/null || echo unknown)
 say "✓ install complete on $(hostname) — version=$VERSION, commit=$(git rev-parse --short HEAD)"
