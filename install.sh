@@ -181,6 +181,25 @@ else
 	ok "python3-psutil + python3-requests present"
 fi
 
+# ─── 3b. diagnostic tools (passive, no daemon) ────────────────────────────────
+# smartmontools is installed but smartd is intentionally NOT enabled.
+# We want `sudo smartctl -a /dev/mmcblk0` available when a Pi acts up,
+# without paying for a background polling daemon. SD cards rarely
+# expose meaningful SMART anyway; the real signal lives in dmesg +
+# the now-persistent journal. This is a "have it when you need it" tool.
+if ! command -v smartctl >/dev/null 2>&1; then
+	say "→ Install diagnostic tools"
+	apt install -y smartmontools >/dev/null 2>&1
+	# Don't enable the smartd daemon — passive use only.
+	systemctl disable --now smartd 2>/dev/null || true
+	systemctl disable --now smartmontools 2>/dev/null || true
+	if command -v smartctl >/dev/null 2>&1; then
+		ok "smartmontools installed (smartd not enabled — passive only)"
+	else
+		warn "smartmontools install failed — non-fatal, continuing"
+	fi
+fi
+
 # ─── 4. substitute path + user into .service ──────────────────────────────────
 say "→ Prepare systemd unit"
 SERVICE_SRC="$REPO_ROOT/pi-health-metrics.service"
