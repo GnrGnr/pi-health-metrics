@@ -148,26 +148,43 @@ if [ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ] \
 		&& [ -n "$(ls -A "/var/log/journal/$MACHINE_ID" 2>/dev/null)" ]; then
 	dim "already persistent — /var/log/journal/$MACHINE_ID exists"
 else
-	# An empty /var/log/journal/ confuses journald (it's been observed
-	# in this fleet to leave it empty rather than create the per-machine
-	# subdir). Nuke and recreate from scratch with canonical perms.
+	# Pi OS Lite ships a drop-in at /usr/lib/systemd/journald.conf.d/
+	# 40-rpi-volatile-storage.conf that forces Storage=volatile to
+	# reduce SD card wear. Drop-ins in /usr/lib/ are processed before
+	# drop-ins in /etc/, so we override there with the highest-priority
+	# numeric prefix (99-) so any future drop-ins still lose to ours.
+	#
+	# Editing /etc/systemd/journald.conf alone doesn't work — the Pi OS
+	# drop-in still wins. Editing the Pi OS drop-in in /usr/lib would
+	# get overwritten by package updates. /etc/ drop-ins are the
+	# canonical Linux mechanism for local overrides.
+	install -d -m 755 /etc/systemd/journald.conf.d
+	cat > /etc/systemd/journald.conf.d/99-pi-health-metrics-persistent.conf <<'JOURNALD_CONF'
+# Installed by pi-health-metrics/install.sh. Overrides Pi OS Lite's
+# default 40-rpi-volatile-storage.conf to give us post-mortem-able
+# logs across reboots. ~25 MB on disk; cheap.
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+SystemKeepFree=500M
+JOURNALD_CONF
+
+	# Restart journald so it re-reads the merged config. The dir tree
+	# under /var/log/journal/ needs to exist with the right perms or
+	# journald will silently fall back to volatile; recreate it cleanly.
 	systemctl stop systemd-journald 2>/dev/null || true
 	rm -rf /var/log/journal
 	install -d -o root -g systemd-journal -m 2755 /var/log/journal
 	systemctl start systemd-journald
 	# Poll for the per-machine subdir up to 10s. journald creates it
-	# asynchronously after restart; on a busy Pi 3B+ under install
-	# load this can take 2-3s. If it still hasn't shown up after the
-	# poll, force the flush from runtime → persistent journal, which
-	# also creates the subdir as a side effect.
+	# asynchronously after restart; on a busy Pi 3B+ this can take
+	# a few seconds. If it still hasn't shown up after the poll, force
+	# the flush from runtime → persistent.
 	for _ in 1 2 3 4 5 6 7 8 9 10; do
 		[ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ] && break
 		sleep 1
 	done
 	if [ -z "$MACHINE_ID" ] || [ ! -d "/var/log/journal/$MACHINE_ID" ]; then
-		# Force the flush. This is a no-op on already-flushed systems
-		# and creates the persistent subdir on systems that haven't
-		# rotated yet. systemctl kill -s USR1 is the documented way.
 		systemctl kill --signal=SIGUSR1 systemd-journald 2>/dev/null || true
 		sleep 2
 	fi
@@ -175,7 +192,7 @@ else
 		ok "persistent journal enabled at /var/log/journal/$MACHINE_ID"
 	else
 		warn "persistent journal directory not populated after restart + flush"
-		warn "  check: systemctl status systemd-journald"
+		warn "  check: systemd-analyze cat-config systemd/journald.conf"
 		warn "  this is non-fatal — pi-health-metrics will still work"
 	fi
 fi
