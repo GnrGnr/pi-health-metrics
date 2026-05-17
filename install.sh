@@ -84,6 +84,38 @@ ok "user=$RUN_USER home=$RUN_HOME"
 
 # ─── 1. force-sync working tree ────────────────────────────────────────────────
 say "→ Sync working tree"
+
+# Pre-check: detect corrupt git state from a previous OOM/crash during
+# fetch. On 1 GB Pis under memory pressure, `git fetch` can write zero-byte
+# object files; subsequent operations look fine but actually run against
+# stale code (last successful checkout). Detect and refuse — the recovery
+# is to nuke and reclone, which the installer can't safely do for the
+# user (.env would be lost without an explicit save).
+FSCK_OUT=$(sudo -u "$RUN_USER" git -C "$REPO_ROOT" fsck --no-progress 2>&1 || true)
+if printf '%s' "$FSCK_OUT" | grep -qE 'empty|missing|corrupt|broken'; then
+	err "git repository is corrupt at $REPO_ROOT:"
+	printf '%s\n' "$FSCK_OUT" | head -10 | sed 's/^/    /' >&2
+	err "Most likely cause: OOM during git fetch on a 1 GB Pi under load."
+	err "Recover by reclone (preserves .env):"
+	dim "  sudo cp $REPO_ROOT/.env /tmp/phm-env"
+	dim "  cd ~ && rm -rf pi-health-metrics"
+	dim "  git clone https://github.com/GnrGnr/pi-health-metrics.git"
+	dim "  sudo cp /tmp/phm-env pi-health-metrics/.env"
+	dim "  sudo chown $RUN_USER:$RUN_USER pi-health-metrics/.env"
+	dim "  sudo chmod 600 pi-health-metrics/.env"
+	dim "  rm -f /tmp/phm-env"
+	dim "  cd pi-health-metrics && sudo bash install.sh"
+	exit 1
+fi
+
+# Clean up any zero-byte ORIG_HEAD left by a previous interrupted fetch.
+# Harmless (it's just a "what was HEAD before the last reset?" marker)
+# but it makes every subsequent git operation print a confusing error.
+if [ -f "$REPO_ROOT/.git/ORIG_HEAD" ] && [ ! -s "$REPO_ROOT/.git/ORIG_HEAD" ]; then
+	rm -f "$REPO_ROOT/.git/ORIG_HEAD"
+	dim "removed empty .git/ORIG_HEAD from a previous interrupted git op"
+fi
+
 sudo -u "$RUN_USER" git fetch --quiet origin
 DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || echo master)
 sudo -u "$RUN_USER" git reset --hard "origin/$DEFAULT_BRANCH"
