@@ -155,13 +155,28 @@ else
 	rm -rf /var/log/journal
 	install -d -o root -g systemd-journal -m 2755 /var/log/journal
 	systemctl start systemd-journald
-	# Give journald a moment to create the per-machine subdir.
-	sleep 1
+	# Poll for the per-machine subdir up to 10s. journald creates it
+	# asynchronously after restart; on a busy Pi 3B+ under install
+	# load this can take 2-3s. If it still hasn't shown up after the
+	# poll, force the flush from runtime → persistent journal, which
+	# also creates the subdir as a side effect.
+	for _ in 1 2 3 4 5 6 7 8 9 10; do
+		[ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ] && break
+		sleep 1
+	done
+	if [ -z "$MACHINE_ID" ] || [ ! -d "/var/log/journal/$MACHINE_ID" ]; then
+		# Force the flush. This is a no-op on already-flushed systems
+		# and creates the persistent subdir on systems that haven't
+		# rotated yet. systemctl kill -s USR1 is the documented way.
+		systemctl kill --signal=SIGUSR1 systemd-journald 2>/dev/null || true
+		sleep 2
+	fi
 	if [ -n "$MACHINE_ID" ] && [ -d "/var/log/journal/$MACHINE_ID" ]; then
 		ok "persistent journal enabled at /var/log/journal/$MACHINE_ID"
 	else
-		warn "persistent journal directory created but journald didn't populate it"
+		warn "persistent journal directory not populated after restart + flush"
 		warn "  check: systemctl status systemd-journald"
+		warn "  this is non-fatal — pi-health-metrics will still work"
 	fi
 fi
 
